@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Perspective Kart Engine</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: sans-serif;
+            flex-direction: column;
+        }
+        canvas {
+            border: 4px solid #fff;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border-radius: 8px;
+            background-color: #87CEEB; /* Sky color */
+        }
+        .instructions {
+            margin-top: 15px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Pseudo-3D Kart Engine</h2>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div class="instructions">
+        <p><strong>Controls:</strong> ⬆️ Gas | ⬇️ Brake/Reverse | ⬅️ ➡️ Steer</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+
+        // Input tracking
+        const keys = {};
+        window.addEventListener('keydown', (e) => keys[e.key] = true);
+        window.addEventListener('keyup', (e) => keys[e.key] = false);
+
+        // Game State variables
+        let position = 0; // How far down the track we've driven (Z-axis)
+        let speed = 0;
+        let maxSpeed = 150;
+        let playerX = 0; // Left/Right position on the road (-1 is left edge, 1 is right edge)
+
+        // Helper function to draw polygons (used for the road segments)
+        function drawPolygon(x1, y1, w1, x2, y2, w2, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x1 - w1, y1); // Bottom Left
+            ctx.lineTo(x1 + w1, y1); // Bottom Right
+            ctx.lineTo(x2 + w2, y2); // Top Right
+            ctx.lineTo(x2 - w2, y2); // Top Left
+            ctx.fill();
+        }
+
+        // Main game logic update
+        function update() {
+            // Acceleration
+            if (keys['ArrowUp']) speed += 2;
+            else if (keys['ArrowDown']) speed -= 2;
+            else speed *= 0.96; // Friction when not pressing gas
+
+            // Cap the speed
+            speed = Math.max(-30, Math.min(speed, maxSpeed));
+
+            // Steering (only if moving)
+            if (Math.abs(speed) > 1) {
+                let steerAmount = 0.03 * (speed / maxSpeed);
+                if (keys['ArrowLeft']) playerX -= steerAmount;
+                if (keys['ArrowRight']) playerX += steerAmount;
+            }
+
+            // Off-road penalty (Slow down if you drive onto the grass)
+            if (playerX < -1.2 || playerX > 1.2) {
+                speed *= 0.90; 
+            }
+
+            // Move forward down the track
+            position += speed;
+            if (position < 0) position = 0;
+        }
+
+        // Draw the 3D world
+        function draw() {
+            // 1. Draw Sky (Clears the screen)
+            ctx.fillStyle = '#87CEEB';
+            ctx.fillRect(0, 0, width, height / 2);
+
+            // Draw a basic sun
+            ctx.fillStyle = '#F1C40F';
+            ctx.beginPath();
+            ctx.arc(600, 150, 60, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. 3D Projection Math for the Road
+            let offset = position % 200; // Smooth scrolling offset
+            let baseSegment = Math.floor(position / 200);
+
+            // We draw from the furthest point away (back) to the closest point (front)
+            // This guarantees things in the foreground cover things in the background
+            for (let n = 50; n > 0; n--) {
+                let seg = baseSegment + n;
+                
+                // Alternate colors to create the illusion of speed/movement
+                let isLight = (Math.floor(seg / 3) % 2 === 0);
+                let color = isLight ? 
+                    { grass: '#27ae60', road: '#7f8c8d', rumble: '#ecf0f1', lane: '#ffffff' } :
+                    { grass: '#2ecc71', road: '#95a5a6', rumble: '#e74c3c', lane: '#95a5a6' };
+
+                // Z-depth (distance from camera)
+                let z1 = (n * 200) - offset;
+                let z2 = ((n + 1) * 200) - offset;
+
+                if (z1 < 1) continue; // Don't draw things behind the camera
+
+                // Scale things down the further away they are (Perspective projection)
+                let scale1 = 400 / z1;
+                let scale2 = 400 / z2;
+
+                // Calculate Y position on screen (Horizon is height/2)
+                let y1 = (height / 2) + (scale1 * 120);
+                let y2 = (height / 2) + (scale2 * 120);
+
+                // Calculate Road Width on screen
+                let w1 = scale1 * 1200;
+                let w2 = scale2 * 1200;
+
+                // Calculate X position (Account for the player steering left and right)
+                let x1 = (width / 2) - (playerX * scale1 * 1200);
+                let x2 = (width / 2) - (playerX * scale2 * 1200);
+
+                // Draw Grass Background for this horizontal slice
+                ctx.fillStyle = color.grass;
+                ctx.fillRect(0, y2, width, y1 - y2 + 1); // +1 prevents tiny gaps between slices
+
+                // Draw Rumble Strips (Slightly wider than the road)
+                drawPolygon(x1, y1, w1 * 1.1, x2, y2, w2 * 1.1, color.rumble);
+
+                // Draw Asphalt Road
+                drawPolygon(x1, y1, w1, x2, y2, w2, color.road);
+                
+                // Draw Dashed Lane Divider in the center
+                if (isLight) {
+                    drawPolygon(x1, y1, w1 * 0.03, x2, y2, w2 * 0.03, color.lane);
+                }
+            }
+
+            // 3. Draw the Player Kart (From behind)
+            ctx.save();
+            ctx.translate(width / 2, height - 90);
+            
+            // Add a slight tilt if turning
+            if (keys['ArrowLeft']) ctx.rotate(-0.05);
+            if (keys['ArrowRight']) ctx.rotate(0.05);
+
+            // Tires
+            ctx.fillStyle = '#222';
+            ctx.fillRect(-55, -20, 25, 45); // Left Tire
+            ctx.fillRect(30, -20, 25, 45);  // Right Tire
+            
+            // Kart Body
+            ctx.fillStyle = '#c0392b'; 
+            ctx.fillRect(-40, -30, 80, 50);
+            
+            // Exhaust Pipes
+            ctx.fillStyle = '#bdc3c7';
+            ctx.fillRect(-25, 20, 15, 10);
+            ctx.fillRect(10, 20, 15, 10);
+
+            // Driver (Blue Overalls, Red Hat - similar to Mario!)
+            ctx.fillStyle = '#2980b9'; // Blue shirt
+            ctx.fillRect(-20, -70, 40, 40);
+            
+            ctx.fillStyle = '#e74c3c'; // Red hat
+            ctx.beginPath();
+            ctx.arc(0, -75, 22, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // 60FPS Game Loop
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
